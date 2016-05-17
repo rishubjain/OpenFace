@@ -818,6 +818,26 @@ int main (int argc, char **argv)
 					fps_vid_in = 30;
 				}
 			}
+			//If no file specified, we want to read from a webcam
+			else
+			{
+				INFO_STREAM("Attempting to read from webcam");
+				for (int d = -1000; d<1000; d++)
+				{
+					video_capture = cv::VideoCapture(d);
+					if (video_capture.isOpened())
+						INFO_STREAM("Opening device " << d);
+						break;
+				}
+				fps_vid_in = video_capture.get(CV_CAP_PROP_FPS);
+
+				// Check if fps is nan or less than 0
+				if (fps_vid_in != fps_vid_in || fps_vid_in <= 0)
+				{
+					INFO_STREAM("FPS of the video file cannot be determined, assuming 30");
+					fps_vid_in = 30;
+				}
+			}
 
 			if (!video_capture.isOpened())
 			{
@@ -904,9 +924,9 @@ int main (int argc, char **argv)
 		double time_stamp = 0;
 
 		INFO_STREAM( "Starting tracking");
-		while(!captured_image.empty())
+		while(time_stamp<10)
 		{		
-
+			imshow("colour", captured_image);
 			// Grab the timestamp first
 			if (video_input)
 			{
