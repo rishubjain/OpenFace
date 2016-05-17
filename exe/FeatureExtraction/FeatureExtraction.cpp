@@ -446,7 +446,7 @@ void prepareOutputFile(std::ofstream* output_file, bool output_2D_landmarks, boo
 	int num_landmarks, int num_model_modes, vector<string> au_names_class, vector<string> au_names_reg)
 {
 
-	*output_file << "frame, timestamp, confidence, success";
+	*output_file << "timestamp";
 
 	if (output_gaze)
 	{
@@ -520,25 +520,42 @@ void outputAllFeatures(std::ofstream* output_file, bool output_2D_landmarks, boo
 	bool output_model_params, bool output_pose, bool output_AUs, bool output_gaze,
 	const LandmarkDetector::CLNF& face_model, int frame_count, double time_stamp, bool detection_success,
 	cv::Point3f gazeDirection0, cv::Point3f gazeDirection1, const cv::Vec6d& pose_estimate, double fx, double fy, double cx, double cy,
-	const FaceAnalysis::FaceAnalyser& face_analyser)
+	const FaceAnalysis::FaceAnalyser& face_analyser, double start_interval, double interval_length, vector<vector<double> > &avg_feats)
 {
 
-	double confidence = 0.5 * (1 - face_model.detection_certainty);
+	if (time_stamp >= interval_length + start_interval) {
+		*output_file << start_interval;
+		for (int j = 0; j < avg_feats.at(0).size(); ++j) {
+			double sum = 0;
+			for (int i = 0; i < avg_feats.size(); ++i) {
+				sum += avg_feats.at(i).at(j);
+			}
+			*output_file << ", " << (sum / avg_feats.size());
+		}
+		*output_file << endl;
+		avg_feats.clear();
+	}
 
-	*output_file << frame_count + 1 << ", " << time_stamp << ", " << confidence << ", " << detection_success;
+	vector<double> frame_feat;
+
+	//double confidence = 0.5 * (1 - face_model.detection_certainty);
+
+	//*output_file << frame_count + 1 << ", " << time_stamp << ", " << confidence << ", " << detection_success;
 
 	// Output the estimated gaze
 	if (output_gaze)
 	{
-		*output_file << ", " << gazeDirection0.x << ", " << gazeDirection0.y << ", " << gazeDirection0.z
-			<< ", " << gazeDirection1.x << ", " << gazeDirection1.y << ", " << gazeDirection1.z;
+		//*output_file << ", " << gazeDirection0.x << ", " << gazeDirection0.y << ", " << gazeDirection0.z
+		//	<< ", " << gazeDirection1.x << ", " << gazeDirection1.y << ", " << gazeDirection1.z;
+		frame_feat.insert(frame_feat.end(), { gazeDirection0.x, gazeDirection0.y, gazeDirection0.z, gazeDirection1.x, gazeDirection1.y, gazeDirection1.z });
 	}
 
 	// Output the estimated head pose
 	if (output_pose)
 	{
-		*output_file << ", " << pose_estimate[0] << ", " << pose_estimate[1] << ", " << pose_estimate[2]
-			<< ", " << pose_estimate[3] << ", " << pose_estimate[4] << ", " << pose_estimate[5];
+		//*output_file << ", " << pose_estimate[0] << ", " << pose_estimate[1] << ", " << pose_estimate[2]
+		//	<< ", " << pose_estimate[3] << ", " << pose_estimate[4] << ", " << pose_estimate[5];
+		frame_feat.insert(frame_feat.end(), { pose_estimate[0], pose_estimate[1], pose_estimate[2], pose_estimate[3], pose_estimate[4], pose_estimate[5] });
 	}
 
 	// Output the detected 2D facial landmarks
@@ -546,7 +563,8 @@ void outputAllFeatures(std::ofstream* output_file, bool output_2D_landmarks, boo
 	{
 		for (int i = 0; i < face_model.pdm.NumberOfPoints() * 2; ++i)
 		{
-			*output_file << ", " << face_model.detected_landmarks.at<double>(i);
+			//*output_file << ", " << face_model.detected_landmarks.at<double>(i);
+			frame_feat.insert(frame_feat.end(), { face_model.detected_landmarks.at<double>(i) });
 		}
 	}
 
@@ -556,7 +574,8 @@ void outputAllFeatures(std::ofstream* output_file, bool output_2D_landmarks, boo
 		cv::Mat_<double> shape_3D = face_model.GetShape(fx, fy, cx, cy);
 		for (int i = 0; i < face_model.pdm.NumberOfPoints() * 3; ++i)
 		{
-			*output_file << ", " << shape_3D.at<double>(i);
+			//*output_file << ", " << shape_3D.at<double>(i);
+			frame_feat.insert(frame_feat.end(), { shape_3D.at<double>(i) });
 		}
 	}
 
@@ -564,11 +583,13 @@ void outputAllFeatures(std::ofstream* output_file, bool output_2D_landmarks, boo
 	{
 		for (int i = 0; i < 6; ++i)
 		{
-			*output_file << ", " << face_model.params_global[i];
+			//*output_file << ", " << face_model.params_global[i];
+			frame_feat.insert(frame_feat.end(), { face_model.params_global[i] });
 		}
 		for (int i = 0; i < face_model.pdm.NumberOfModes(); ++i)
 		{
-			*output_file << ", " << face_model.params_local.at<double>(i, 0);
+			//*output_file << ", " << face_model.params_local.at<double>(i, 0);
+			frame_feat.insert(frame_feat.end(), { face_model.params_local.at<double>(i, 0) });
 		}
 	}
 
@@ -588,7 +609,8 @@ void outputAllFeatures(std::ofstream* output_file, bool output_2D_landmarks, boo
 			{
 				if (au_name.compare(au_reg.first) == 0)
 				{
-					*output_file << ", " << au_reg.second;
+					//*output_file << ", " << au_reg.second;
+					frame_feat.insert(frame_feat.end(), { au_reg.second });
 					break;
 				}
 			}
@@ -598,7 +620,8 @@ void outputAllFeatures(std::ofstream* output_file, bool output_2D_landmarks, boo
 		{
 			for (size_t p = 0; p < face_analyser.GetAURegNames().size(); ++p)
 			{
-				*output_file << ", 0";
+				//*output_file << ", 0";
+				frame_feat.insert(frame_feat.end(), { 0 });
 			}
 		}
 
@@ -614,7 +637,8 @@ void outputAllFeatures(std::ofstream* output_file, bool output_2D_landmarks, boo
 			{
 				if (au_name.compare(au_class.first) == 0)
 				{
-					*output_file << ", " << au_class.second;
+					//*output_file << ", " << au_class.second;
+					frame_feat.insert(frame_feat.end(), { au_class.second });
 					break;
 				}
 			}
@@ -624,11 +648,13 @@ void outputAllFeatures(std::ofstream* output_file, bool output_2D_landmarks, boo
 		{
 			for (size_t p = 0; p < face_analyser.GetAUClassNames().size(); ++p)
 			{
-				*output_file << ", 0";
+				//*output_file << ", 0";
+				frame_feat.insert(frame_feat.end(), { 0 });
 			}
 		}
 	}
-	*output_file << endl;
+	avg_feats.push_back(frame_feat);
+	//*output_file << endl;
 }
 
 void post_process_output_file(FaceAnalysis::FaceAnalyser& face_analyser, string output_file);
@@ -822,12 +848,15 @@ int main (int argc, char **argv)
 			else
 			{
 				INFO_STREAM("Attempting to read from webcam");
-				for (int d = -1000; d<1000; d++)
+				for (int d = 0; d<1000; d++)
 				{
-					video_capture = cv::VideoCapture(d);
-					if (video_capture.isOpened())
+					if (d <-2)
+						continue;
+					video_capture.open(d);
+					if (video_capture.isOpened()) {
 						INFO_STREAM("Opening device " << d);
 						break;
+					}
 				}
 				fps_vid_in = video_capture.get(CV_CAP_PROP_FPS);
 
@@ -922,9 +951,13 @@ int main (int argc, char **argv)
 
 		// Timestamp in seconds of current processing
 		double time_stamp = 0;
+		double start_interval = 0;
+		double interval_length = 0.150;
+
+		vector<vector<double> > avg_feats;
 
 		INFO_STREAM( "Starting tracking");
-		while(time_stamp<10)
+		while(!captured_image.empty())
 		{		
 			imshow("colour", captured_image);
 			// Grab the timestamp first
@@ -979,7 +1012,7 @@ int main (int argc, char **argv)
 			// But only if needed in output
 			if(!output_similarity_align.empty() || hog_output_file.is_open() || output_AUs)
 			{
-				face_analyser.AddNextFrame(captured_image, face_model, time_stamp, false, !det_parameters.quiet_mode);
+				face_analyser.AddNextFrame(captured_image, face_model, time_stamp, true, !det_parameters.quiet_mode);
 				face_analyser.GetLatestAlignedFace(sim_warped_img);
 
 				if(!det_parameters.quiet_mode)
@@ -1045,7 +1078,10 @@ int main (int argc, char **argv)
 			// Output the landmarks, pose, gaze, parameters and AUs
 			outputAllFeatures(&output_file, output_2D_landmarks, output_3D_landmarks, output_model_params, output_pose, output_AUs, output_gaze,
 				face_model, frame_count, time_stamp, detection_success, gazeDirection0, gazeDirection1,
-				pose_estimate, fx, fy, cx, cy, face_analyser);
+				pose_estimate, fx, fy, cx, cy, face_analyser, start_interval, interval_length, avg_feats);
+			if (time_stamp >= interval_length + start_interval) {
+				start_interval += interval_length;
+			}
 
 			// output the tracked video
 			if(!tracked_videos_output.empty())
