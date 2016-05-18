@@ -103,6 +103,55 @@ using namespace std;
 
 using namespace boost::filesystem;
 
+//Get the Average
+double averageV(vector<double> v)
+{
+	double sum = 0;
+	for (int i = 0; i<v.size(); i++)
+		sum += v[i];
+	return sum / v.size();
+}
+
+//Get the Standard Deviation
+double deviationV(vector<double> v, double ave)
+{
+	double E = 0;
+	// Quick Question - Can vector::size() return 0?
+	double inverse = 1.0 / static_cast<double>(v.size());
+	for (unsigned int i = 0; i<v.size(); i++)
+	{
+		E += pow(static_cast<double>(v[i]) - ave, 2);
+	}
+	return sqrt(inverse * E);
+}
+
+//Helper function to get the median
+double median(vector<double>::const_iterator begin,
+	vector<double>::const_iterator end) {
+	int len = end - begin;
+	auto it = begin + len / 2;
+	double m = *it;
+	if ((len % 2) == 0) m = (m + *(--it)) / 2;
+	return m;
+}
+
+//Get the 3 quartiles
+tuple<double, double, double> quartiles(const vector<double>& v) {
+	auto it_second_half = v.cbegin() + v.size() / 2;
+	auto it_first_half = it_second_half;
+	if ((v.size() % 2) == 0) --it_first_half;
+
+	double q1 = median(v.begin(), it_first_half);
+	double q2 = median(v.begin(), v.end());
+	double q3 = median(it_second_half, v.end());
+	return make_tuple(q1, q2, q3);
+}
+
+double nthPercentile(vector<double>& v, double percent) {
+	nth_element(v.begin(), v.begin() + int((v.size()*percent)), v.end());
+	return *(v.begin() + int(v.size()*percent));
+}
+
 vector<string> get_arguments(int argc, char **argv)
 {
 
@@ -447,26 +496,30 @@ void prepareOutputFile(std::ofstream* output_file, bool output_2D_landmarks, boo
 {
 
 	*output_file << "timestamp";
+	// avg << "," << sd << "," << get<0>(q) << "," << get<1>(q) << "," << get<2>(q) << "," << p95 << "," << p05;
+
+	vector<string> feat_stats = { "avg", "sd", "q1", "q2", "q3", "p95", "p05" };
+	vector<string> out_vals;
 
 	if (output_gaze)
 	{
-		*output_file << ", gaze_0_x, gaze_0_y, gaze_0_z, gaze_1_x, gaze_1_y, gaze_2_z";
+		out_vals.insert(out_vals.end(), { "gaze_0_x", "gaze_0_y", "gaze_0_z", "gaze_1_x", "gaze_1_y", "gaze_2_z" });
 	}
 
 	if (output_pose)
 	{
-		*output_file << ", pose_Tx, pose_Ty, pose_Tz, pose_Rx, pose_Ry, pose_Rz";
+		out_vals.insert(out_vals.end(), { "pose_Tx", "pose_Ty", "pose_Tz", "pose_Rx", "pose_Ry", "pose_Rz" });
 	}
 
 	if (output_2D_landmarks)
 	{
 		for (int i = 0; i < num_landmarks; ++i)
 		{
-			*output_file << ", x_" << i;
+			out_vals.push_back("x_" + i);
 		}
 		for (int i = 0; i < num_landmarks; ++i)
 		{
-			*output_file << ", y_" << i;
+			out_vals.push_back("y_" + i);
 		}
 	}
 
@@ -474,25 +527,25 @@ void prepareOutputFile(std::ofstream* output_file, bool output_2D_landmarks, boo
 	{
 		for (int i = 0; i < num_landmarks; ++i)
 		{
-			*output_file << ", X_" << i;
+			out_vals.push_back("X_" + i);
 		}
 		for (int i = 0; i < num_landmarks; ++i)
 		{
-			*output_file << ", Y_" << i;
+			out_vals.push_back("Y_" + i);
 		}
 		for (int i = 0; i < num_landmarks; ++i)
 		{
-			*output_file << ", Z_" << i;
+			out_vals.push_back("Z_" + i);
 		}
 	}
 
 	// Outputting model parameters (rigid and non-rigid), the first parameters are the 6 rigid shape parameters, they are followed by the non rigid shape parameters
 	if (output_model_params)
 	{
-		*output_file << ", p_scale, p_rx, p_ry, p_rz, p_tx, p_ty";
+		out_vals.insert(out_vals.end(), { "p_scale", "p_rx", "p_ry", "p_rz", "p_tx", "p_ty" });
 		for (int i = 0; i < num_model_modes; ++i)
 		{
-			*output_file << ", p_" << i;
+			out_vals.push_back("p_" + i);
 		}
 	}
 
@@ -501,16 +554,21 @@ void prepareOutputFile(std::ofstream* output_file, bool output_2D_landmarks, boo
 		std::sort(au_names_reg.begin(), au_names_reg.end());
 		for (string reg_name : au_names_reg)
 		{
-			*output_file << ", " << reg_name << "_r";
+			out_vals.push_back(reg_name + "_r");
 		}
 
 		std::sort(au_names_class.begin(), au_names_class.end());
 		for (string class_name : au_names_class)
 		{
-			*output_file << ", " << class_name << "_c";
+			out_vals.push_back(class_name + "_c");
 		}
 	}
 
+	for (auto o : out_vals) {
+		for (string fs : feat_stats) {
+			*output_file << "," << o << "_" << fs;
+		}
+	}
 	*output_file << endl;
 
 }
@@ -520,23 +578,35 @@ void outputAllFeatures(std::ofstream* output_file, bool output_2D_landmarks, boo
 	bool output_model_params, bool output_pose, bool output_AUs, bool output_gaze,
 	const LandmarkDetector::CLNF& face_model, int frame_count, double time_stamp, bool detection_success,
 	cv::Point3f gazeDirection0, cv::Point3f gazeDirection1, const cv::Vec6d& pose_estimate, double fx, double fy, double cx, double cy,
-	const FaceAnalysis::FaceAnalyser& face_analyser, double start_interval, double interval_length, vector<vector<double> > &avg_feats)
+	const FaceAnalysis::FaceAnalyser& face_analyser, double start_interval, double interval_length, double history_length, vector<vector<double> > &avg_feats)
 {
 
 	if (time_stamp >= interval_length + start_interval) {
 		*output_file << start_interval;
-		for (int j = 0; j < avg_feats.at(0).size(); ++j) {
-			double sum = 0;
+		for (int j = 1; j < avg_feats.at(0).size(); ++j) {
+			vector<double> feat_list;
 			for (int i = 0; i < avg_feats.size(); ++i) {
-				sum += avg_feats.at(i).at(j);
+				feat_list.push_back(avg_feats.at(i).at(j));
 			}
-			*output_file << ", " << (sum / avg_feats.size());
+			double avg = averageV(feat_list);
+			double sd = deviationV(feat_list, avg);
+			sort(feat_list.begin(), feat_list.end());
+			auto q = quartiles(feat_list);
+			double p95 = nthPercentile(feat_list, .95);
+			double p05 = nthPercentile(feat_list, .05);
+
+			*output_file << "," << avg << "," << sd << "," << get<0>(q) << "," << get<1>(q) << "," << get<2>(q) << "," << p95 << "," << p05;
 		}
 		*output_file << endl;
-		avg_feats.clear();
+		int n = 0;
+		for (n = 0; n < avg_feats.size(); n++) {
+			if (avg_feats.at(n).at(0) >= 2*interval_length + start_interval - history_length)
+				break;
+		}
+		avg_feats.erase(avg_feats.begin(), avg_feats.begin() + n);
 	}
 
-	vector<double> frame_feat;
+	vector<double> frame_feat = { time_stamp };
 
 	//double confidence = 0.5 * (1 - face_model.detection_certainty);
 
@@ -681,6 +751,7 @@ int main (int argc, char **argv)
 	bool video_input = true;
 	bool verbose = true;
 	bool images_as_video = false;
+	bool real_time = false;
 
 	vector<vector<string> > input_image_files;
 
@@ -848,6 +919,7 @@ int main (int argc, char **argv)
 			else
 			{
 				INFO_STREAM("Attempting to read from webcam");
+				real_time = true;
 				for (int d = 0; d<1000; d++)
 				{
 					if (d <-2)
@@ -952,14 +1024,14 @@ int main (int argc, char **argv)
 		// Timestamp in seconds of current processing
 		double time_stamp = 0;
 		double start_interval = 0;
-		double interval_length = 0.150;
+		double interval_length = 1;
+		double history_length = 5;
 
 		vector<vector<double> > avg_feats;
 
 		INFO_STREAM( "Starting tracking");
 		while(!captured_image.empty())
 		{		
-			imshow("colour", captured_image);
 			// Grab the timestamp first
 			if (video_input)
 			{
@@ -1012,7 +1084,10 @@ int main (int argc, char **argv)
 			// But only if needed in output
 			if(!output_similarity_align.empty() || hog_output_file.is_open() || output_AUs)
 			{
-				face_analyser.AddNextFrame(captured_image, face_model, time_stamp, true, !det_parameters.quiet_mode);
+				if (real_time)
+					face_analyser.AddNextFrame(captured_image, face_model, time_stamp, true, !det_parameters.quiet_mode); // changed to true for online mode
+				else
+					face_analyser.AddNextFrame(captured_image, face_model, time_stamp, false, !det_parameters.quiet_mode);
 				face_analyser.GetLatestAlignedFace(sim_warped_img);
 
 				if(!det_parameters.quiet_mode)
@@ -1078,7 +1153,7 @@ int main (int argc, char **argv)
 			// Output the landmarks, pose, gaze, parameters and AUs
 			outputAllFeatures(&output_file, output_2D_landmarks, output_3D_landmarks, output_model_params, output_pose, output_AUs, output_gaze,
 				face_model, frame_count, time_stamp, detection_success, gazeDirection0, gazeDirection1,
-				pose_estimate, fx, fy, cx, cy, face_analyser, start_interval, interval_length, avg_feats);
+				pose_estimate, fx, fy, cx, cy, face_analyser, start_interval, interval_length, history_length, avg_feats);
 			if (time_stamp >= interval_length + start_interval) {
 				start_interval += interval_length;
 			}
