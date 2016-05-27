@@ -204,7 +204,7 @@ void create_directory(string output_path)
 void get_output_feature_params(vector<string> &output_similarity_aligned, vector<string> &output_hog_aligned_files, double &similarity_scale, 
 	int &similarity_size, bool &grayscale, bool &rigid, bool& verbose, 
 	bool &output_2D_landmarks, bool &output_3D_landmarks, bool &output_model_params, bool &output_pose, bool &output_AUs, bool &output_gaze,
-	vector<string> &arguments)
+	double &interval_length, double &history_length, vector<string> &arguments)
 {
 	output_similarity_aligned.clear();
 	output_hog_aligned_files.clear();
@@ -314,6 +314,20 @@ void get_output_feature_params(vector<string> &output_similarity_aligned, vector
 		{
 			output_gaze = false;
 			valid[i] = false;
+		}
+		else if (arguments[i].compare("-il") == 0)
+		{
+			interval_length = stod(arguments[i + 1]);
+			valid[i] = false;
+			valid[i + 1] = false;
+			i++;
+		}
+		else if (arguments[i].compare("-hl") == 0)
+		{
+			history_length = stod(arguments[i + 1]);
+			valid[i] = false;
+			valid[i + 1] = false;
+			i++;
 		}
 	}
 
@@ -492,7 +506,7 @@ void visualise_tracking(cv::Mat& captured_image, const LandmarkDetector::CLNF& f
 
 void prepareOutputFile(std::ofstream* output_file, bool output_2D_landmarks, bool output_3D_landmarks,
 	bool output_model_params, bool output_pose, bool output_AUs, bool output_gaze,
-	int num_landmarks, int num_model_modes, vector<string> au_names_class, vector<string> au_names_reg)
+	int num_landmarks, int num_model_modes, vector<string> au_names_class, vector<string> au_names_reg, int& num_output_params)
 {
 
 	*output_file << "timestamp";
@@ -508,18 +522,18 @@ void prepareOutputFile(std::ofstream* output_file, bool output_2D_landmarks, boo
 
 	if (output_pose)
 	{
-		out_vals.insert(out_vals.end(), { "pose_Tx", "pose_Ty", "pose_Tz", "pose_Rx", "pose_Ry", "pose_Rz" });
+		out_vals.insert(out_vals.end(), { "pose_delt_Tx", "pose_delt_Ty", "pose_delt_Tz", "pose_Rx", "pose_Ry", "pose_Rz" });
 	}
 
 	if (output_2D_landmarks)
 	{
 		for (int i = 0; i < num_landmarks; ++i)
 		{
-			out_vals.push_back("x_" + i);
+			out_vals.push_back("x_" + to_string(i));
 		}
 		for (int i = 0; i < num_landmarks; ++i)
 		{
-			out_vals.push_back("y_" + i);
+			out_vals.push_back("y_" + to_string(i));
 		}
 	}
 
@@ -527,15 +541,15 @@ void prepareOutputFile(std::ofstream* output_file, bool output_2D_landmarks, boo
 	{
 		for (int i = 0; i < num_landmarks; ++i)
 		{
-			out_vals.push_back("X_" + i);
+			out_vals.push_back("X_" + to_string(i));
 		}
 		for (int i = 0; i < num_landmarks; ++i)
 		{
-			out_vals.push_back("Y_" + i);
+			out_vals.push_back("Y_" + to_string(i));
 		}
 		for (int i = 0; i < num_landmarks; ++i)
 		{
-			out_vals.push_back("Z_" + i);
+			out_vals.push_back("Z_" + to_string(i));
 		}
 	}
 
@@ -545,7 +559,7 @@ void prepareOutputFile(std::ofstream* output_file, bool output_2D_landmarks, boo
 		out_vals.insert(out_vals.end(), { "p_scale", "p_rx", "p_ry", "p_rz", "p_tx", "p_ty" });
 		for (int i = 0; i < num_model_modes; ++i)
 		{
-			out_vals.push_back("p_" + i);
+			out_vals.push_back("p_" + to_string(i));
 		}
 	}
 
@@ -567,6 +581,7 @@ void prepareOutputFile(std::ofstream* output_file, bool output_2D_landmarks, boo
 	for (auto o : out_vals) {
 		for (string fs : feat_stats) {
 			*output_file << "," << o << "_" << fs;
+			num_output_params++;
 		}
 	}
 	*output_file << endl;
@@ -577,43 +592,56 @@ void prepareOutputFile(std::ofstream* output_file, bool output_2D_landmarks, boo
 void outputAllFeatures(std::ofstream* output_file, bool output_2D_landmarks, bool output_3D_landmarks,
 	bool output_model_params, bool output_pose, bool output_AUs, bool output_gaze,
 	const LandmarkDetector::CLNF& face_model, int frame_count, double time_stamp, bool detection_success,
-	cv::Point3f gazeDirection0, cv::Point3f gazeDirection1, const cv::Vec6d& pose_estimate, double fx, double fy, double cx, double cy,
-	const FaceAnalysis::FaceAnalyser& face_analyser, double start_interval, double interval_length, double history_length, vector<vector<double> > &avg_feats)
+	cv::Point3f gazeDirection0, cv::Point3f gazeDirection1, const cv::Vec6d& pose_estimate, const cv::Vec6d& prev_pose_estimate, double fx, double fy, double cx, double cy,
+	const FaceAnalysis::FaceAnalyser& face_analyser, double& start_interval, double interval_length,
+	double history_length, vector<vector<double> > &avg_feats, int num_output_params, bool kid_on_right)
 {
 
-	if (time_stamp >= interval_length + start_interval) {
+	if (time_stamp >= history_length + start_interval) {
 		*output_file << start_interval;
-		for (int j = 1; j < avg_feats.at(0).size(); ++j) {
-			vector<double> feat_list;
-			for (int i = 0; i < avg_feats.size(); ++i) {
-				feat_list.push_back(avg_feats.at(i).at(j));
+		start_interval += interval_length;
+		if (avg_feats.empty()) {
+			for (int i = 0; i < num_output_params; i++) {
+				*output_file << ",NaN";
 			}
-			double avg = averageV(feat_list);
-			double sd = deviationV(feat_list, avg);
-			sort(feat_list.begin(), feat_list.end());
-			auto q = quartiles(feat_list);
-			double p95 = nthPercentile(feat_list, .95);
-			double p05 = nthPercentile(feat_list, .05);
+		}
+		else {
+			for (int j = 1; j < avg_feats.at(0).size(); ++j) {
+				vector<double> feat_list;
+				for (int i = 0; i < avg_feats.size(); ++i) {
+					feat_list.push_back(avg_feats.at(i).at(j));
+				}
+				double avg = averageV(feat_list);
+				double sd = deviationV(feat_list, avg);
+				sort(feat_list.begin(), feat_list.end());
+				auto q = quartiles(feat_list);
+				double p95 = nthPercentile(feat_list, .95);
+				double p05 = nthPercentile(feat_list, .05);
 
-			*output_file << "," << avg << "," << sd << "," << get<0>(q) << "," << get<1>(q) << "," << get<2>(q) << "," << p95 << "," << p05;
+				*output_file << "," << avg << "," << sd << "," << get<0>(q) << "," << get<1>(q) << "," << get<2>(q) << "," << p95 << "," << p05;
+			}
+			int n = 0;
+			for (n = 0; n < avg_feats.size(); n++) {
+				if (avg_feats.at(n).at(0) >= start_interval)
+					break;
+			}
+			avg_feats.erase(avg_feats.begin(), avg_feats.begin() + n);
 		}
 		*output_file << endl;
-		int n = 0;
-		for (n = 0; n < avg_feats.size(); n++) {
-			if (avg_feats.at(n).at(0) >= 2*interval_length + start_interval - history_length)
-				break;
-		}
-		avg_feats.erase(avg_feats.begin(), avg_feats.begin() + n);
 	}
+
+	double confidence = 0.5 * (1 - face_model.detection_certainty);
+
+	if (!detection_success || confidence < .9)
+		return;
 
 	vector<double> frame_feat = { time_stamp };
 
-	//double confidence = 0.5 * (1 - face_model.detection_certainty);
 
 	//*output_file << frame_count + 1 << ", " << time_stamp << ", " << confidence << ", " << detection_success;
 
 	// Output the estimated gaze
-	if (output_gaze)
+	if (output_gaze) //if this is used, then invert
 	{
 		//*output_file << ", " << gazeDirection0.x << ", " << gazeDirection0.y << ", " << gazeDirection0.z
 		//	<< ", " << gazeDirection1.x << ", " << gazeDirection1.y << ", " << gazeDirection1.z;
@@ -625,7 +653,10 @@ void outputAllFeatures(std::ofstream* output_file, bool output_2D_landmarks, boo
 	{
 		//*output_file << ", " << pose_estimate[0] << ", " << pose_estimate[1] << ", " << pose_estimate[2]
 		//	<< ", " << pose_estimate[3] << ", " << pose_estimate[4] << ", " << pose_estimate[5];
-		frame_feat.insert(frame_feat.end(), { pose_estimate[0], pose_estimate[1], pose_estimate[2], pose_estimate[3], pose_estimate[4], pose_estimate[5] });
+		//out_vals.insert(out_vals.end(), { "pose_Tx", "pose_Ty", "pose_Tz", "pose_Rx", "pose_Ry", "pose_Rz" });
+		frame_feat.insert(frame_feat.end(),
+		{ ((kid_on_right) ? 1 : -1) * (pose_estimate[0] - prev_pose_estimate[0]), pose_estimate[1] - prev_pose_estimate[1], pose_estimate[2] - prev_pose_estimate[2],
+			pose_estimate[3], ((kid_on_right) ? 1 : -1) * pose_estimate[4], ((kid_on_right) ? 1 : -1) * pose_estimate[5] });
 	}
 
 	// Output the detected 2D facial landmarks
@@ -811,8 +842,12 @@ int main (int argc, char **argv)
 	bool output_AUs = true;
 	bool output_gaze = true;
 
+	//get history and step size lengths
+	double interval_length = 1;
+	double history_length = 7;
+
 	get_output_feature_params(output_similarity_align, output_hog_align_files, sim_scale, sim_size, grayscale, rigid, verbose, 
-		output_2D_landmarks, output_3D_landmarks, output_model_params, output_pose, output_AUs, output_gaze, arguments);
+		output_2D_landmarks, output_3D_landmarks, output_model_params, output_pose, output_AUs, output_gaze, interval_length, history_length, arguments);
 	
 	// Used for image masking
 
@@ -887,6 +922,8 @@ int main (int argc, char **argv)
 
 		double fps_vid_in = -1.0;
 
+		bool kid_on_right = true;
+
 		if(video_input)
 		{
 			// We might specify multiple video files as arguments
@@ -913,6 +950,12 @@ int main (int argc, char **argv)
 				{
 					INFO_STREAM("FPS of the video file cannot be determined, assuming 30");
 					fps_vid_in = 30;
+				}
+
+				string upper_file = current_file;
+				std::transform(upper_file.begin(), upper_file.end(), upper_file.begin(), ::toupper); 
+				if (upper_file.find("LEFT") != string::npos) {
+					kid_on_right = false;
 				}
 			}
 			//If no file specified, we want to read from a webcam
@@ -987,11 +1030,12 @@ int main (int argc, char **argv)
 	
 		// Creating output files
 		std::ofstream output_file;
+		int num_output_params = 0;
 
 		if (!output_files.empty())
 		{
 			output_file.open(output_files[f_n], ios_base::out);
-			prepareOutputFile(&output_file, output_2D_landmarks, output_3D_landmarks, output_model_params, output_pose, output_AUs, output_gaze, face_model.pdm.NumberOfPoints(), face_model.pdm.NumberOfModes(), face_analyser.GetAUClassNames(), face_analyser.GetAURegNames());
+			prepareOutputFile(&output_file, output_2D_landmarks, output_3D_landmarks, output_model_params, output_pose, output_AUs, output_gaze, face_model.pdm.NumberOfPoints(), face_model.pdm.NumberOfModes(), face_analyser.GetAUClassNames(), face_analyser.GetAURegNames(), num_output_params);
 		}
 
 		// Saving the HOG features
@@ -1024,10 +1068,10 @@ int main (int argc, char **argv)
 		// Timestamp in seconds of current processing
 		double time_stamp = 0;
 		double start_interval = 0;
-		double interval_length = 1;
-		double history_length = 5;
 
 		vector<vector<double> > avg_feats;
+		cv::Vec6d prev_post_estimate;
+		bool prev_pose_init = false;
 
 		INFO_STREAM( "Starting tracking");
 		while(!captured_image.empty())
@@ -1117,6 +1161,10 @@ int main (int argc, char **argv)
 			{
 				pose_estimate = LandmarkDetector::GetCorrectedPoseCamera(face_model, fx, fy, cx, cy);
 			}
+			if (!prev_pose_init) {
+				prev_post_estimate = cv::Vec6d(pose_estimate);
+				prev_pose_init = true;
+			}
 
 			if(hog_output_file.is_open())
 			{
@@ -1153,10 +1201,12 @@ int main (int argc, char **argv)
 			// Output the landmarks, pose, gaze, parameters and AUs
 			outputAllFeatures(&output_file, output_2D_landmarks, output_3D_landmarks, output_model_params, output_pose, output_AUs, output_gaze,
 				face_model, frame_count, time_stamp, detection_success, gazeDirection0, gazeDirection1,
-				pose_estimate, fx, fy, cx, cy, face_analyser, start_interval, interval_length, history_length, avg_feats);
-			if (time_stamp >= interval_length + start_interval) {
-				start_interval += interval_length;
-			}
+				pose_estimate, prev_post_estimate, fx, fy, cx, cy, face_analyser, start_interval, interval_length, history_length, avg_feats, num_output_params, kid_on_right);
+
+			double confidence = 0.5 * (1 - face_model.detection_certainty);
+
+			if (detection_success && confidence > .9)
+				prev_post_estimate = cv::Vec6d(pose_estimate);
 
 			// output the tracked video
 			if(!tracked_videos_output.empty())
