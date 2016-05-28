@@ -59,9 +59,14 @@
 
 // FeatureExtraction.cpp : Defines the entry point for the feature extraction console application.
 
+// Assuming windows
+#include <windows.h>
+
 // System includes
 #include <fstream>
 #include <sstream>
+#include <chrono>
+#include <thread>
 
 // OpenCV includes
 #include <opencv2/videoio/videoio.hpp>  // Video write
@@ -315,6 +320,7 @@ void get_output_feature_params(vector<string> &output_similarity_aligned, vector
 			output_gaze = false;
 			valid[i] = false;
 		}
+		// Default interval is 1
 		else if (arguments[i].compare("-il") == 0)
 		{
 			interval_length = stod(arguments[i + 1]);
@@ -322,6 +328,7 @@ void get_output_feature_params(vector<string> &output_similarity_aligned, vector
 			valid[i + 1] = false;
 			i++;
 		}
+		// Default history is 7
 		else if (arguments[i].compare("-hl") == 0)
 		{
 			history_length = stod(arguments[i + 1]);
@@ -847,8 +854,9 @@ int main (int argc, char **argv)
 	double history_length = 7;
 
 	get_output_feature_params(output_similarity_align, output_hog_align_files, sim_scale, sim_size, grayscale, rigid, verbose, 
-		output_2D_landmarks, output_3D_landmarks, output_model_params, output_pose, output_AUs, output_gaze, interval_length, history_length, arguments);
-	
+		output_2D_landmarks, output_3D_landmarks, output_model_params, output_pose, output_AUs, output_gaze,
+		interval_length, history_length, arguments);
+
 	// Used for image masking
 
 	cv::Mat_<int> triangulation;
@@ -963,16 +971,9 @@ int main (int argc, char **argv)
 			{
 				INFO_STREAM("Attempting to read from webcam");
 				real_time = true;
-				for (int d = 0; d<1000; d++)
-				{
-					if (d <-2)
-						continue;
-					video_capture.open(d);
-					if (video_capture.isOpened()) {
-						INFO_STREAM("Opening device " << d);
-						break;
-					}
-				}
+				// Specify correct input webcam
+				// TODO add this as a command line feature
+				video_capture.open(0);
 				fps_vid_in = video_capture.get(CV_CAP_PROP_FPS);
 
 				// Check if fps is nan or less than 0
@@ -1068,16 +1069,28 @@ int main (int argc, char **argv)
 		// Timestamp in seconds of current processing
 		double time_stamp = 0;
 		double start_interval = 0;
-
 		vector<vector<double> > avg_feats;
 		cv::Vec6d prev_post_estimate;
 		bool prev_pose_init = false;
 
 		INFO_STREAM( "Starting tracking");
+
+		double curr_tick = cv::getTickCount();
+
+		// Set the fps to be used in real-time
+		// TODO make this a command line variable
+		double fps_goal = 13.0;
+		double frame_sec = 1.0 / fps_goal;
+		if (real_time)
+			time_stamp -= frame_sec;
+
 		while(!captured_image.empty())
 		{		
 			// Grab the timestamp first
-			if (video_input)
+			if (real_time) {
+				time_stamp += frame_sec;
+			}
+			else if (video_input)
 			{
 				time_stamp = (double)frame_count * (1.0 / fps_vid_in);				
 			}
@@ -1128,10 +1141,10 @@ int main (int argc, char **argv)
 			// But only if needed in output
 			if(!output_similarity_align.empty() || hog_output_file.is_open() || output_AUs)
 			{
-				if (real_time)
-					face_analyser.AddNextFrame(captured_image, face_model, time_stamp, true, !det_parameters.quiet_mode); // changed to true for online mode
-				else
-					face_analyser.AddNextFrame(captured_image, face_model, time_stamp, false, !det_parameters.quiet_mode);
+				// Always use real-time AU prediction
+				face_analyser.AddNextFrame(captured_image, face_model, time_stamp, true, !det_parameters.quiet_mode);
+				// face_analyser.AddNextFrame(captured_image, face_model, time_stamp, false, !det_parameters.quiet_mode);
+
 				face_analyser.GetLatestAlignedFace(sim_warped_img);
 
 				if(!det_parameters.quiet_mode)
@@ -1256,20 +1269,28 @@ int main (int argc, char **argv)
 					reported_completion = reported_completion + 1;
 				}
 			}
-
+			if (real_time) {
+				double tick_end = cv::getTickCount();
+				double wait_time_sec = frame_sec - (double(tick_end - curr_tick) / cv::getTickFrequency());
+				if (wait_time_sec>0)
+					Sleep(wait_time_sec*1000);
+				curr_tick += cv::getTickFrequency() * frame_sec;
+			}
 		}
 		
 		output_file.close();
-
-		if(output_files.size() > 0)
-		{
 		
-			// If the video is long enough post-process it for AUs
-			if (output_AUs && frame_count > 100)
-			{
-				post_process_output_file(face_analyser, output_files[f_n]);
-			}
-		}
+		// Commented below out, because using online post-processing instead of all at the end.
+
+		//if(output_files.size() > 0)
+		//{
+		//
+		//	// If the video is long enough post-process it for AUs
+		//	if (output_AUs && frame_count > 100)
+		//	{
+		//		post_process_output_file(face_analyser, output_files[f_n]);
+		//	}
+		//}
 		// Reset the models for the next video
 		face_analyser.Reset();
 		face_model.Reset();
